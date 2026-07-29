@@ -7,6 +7,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.util.Map;
 
 @RestController
@@ -17,22 +18,27 @@ public class PaymentController {
     @Autowired
     private MockPaymentService mockPaymentService;
 
+    // Process payment for any user
     @PostMapping("/mock-checkout")
     public ResponseEntity<?> mockCheckout(@RequestBody MockPaymentRequest request) {
         try {
-            // Hardcoding User ID 1 for now until we integrate JWT Auth later
-            Long currentUserId = 1L;
-
-            Transaction successfulTxn = mockPaymentService.processMockPayment(request.getPlan(), currentUserId);
+            Transaction successfulTxn = mockPaymentService.processMockPayment(request.getPlan(), request.getEmail());
 
             return ResponseEntity.ok(Map.of(
                     "success", true,
                     "message", "Payment Successful!",
                     "transactionId", successfulTxn.getTransactionId(),
+                    "userId", successfulTxn.getUserId(),
                     "plan", successfulTxn.getPlanPurchased()
             ));
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }
+    }
+
+    // GET all payment history for all users
+    @GetMapping("/history")
+    public ResponseEntity<List<Transaction>> getAllPaymentHistory() {
+        return ResponseEntity.ok(mockPaymentService.getAllTransactions());
     }
 }

@@ -1,6 +1,7 @@
 package com.example.aistudio_backend.controller;
 
 import com.example.aistudio_backend.service.BackgroundRemovalService;
+import com.example.aistudio_backend.service.UserService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -16,23 +17,37 @@ public class ImageEditController {
     @Autowired
     private BackgroundRemovalService backgroundRemovalService;
 
-    @PostMapping("/remove-background")
-    public ResponseEntity<Map<String, String>> removeBackground(@RequestParam("file") MultipartFile file) {
+    @Autowired
+    private UserService userService;
 
-        // Validation: Ensure the user actually uploaded an image
-        if (file.isEmpty() || !file.getContentType().startsWith("image/")) {
+    @PostMapping("/remove-background")
+    public ResponseEntity<?> removeBackground(@RequestParam("file") MultipartFile file) {
+        Long currentUserId = 1L; // Hardcoded until JWT
+
+        if (file.isEmpty() || file.getContentType() == null || !file.getContentType().startsWith("image/")) {
             return ResponseEntity.badRequest().body(Map.of(
                     "error", "Please upload a valid image file (JPG/PNG)."
             ));
         }
 
-        String resultUrl = backgroundRemovalService.removeBackgroundAndSave(file);
+        try {
+            // 1. Deduct 1 credit for background removal
+            userService.deductCredit(currentUserId);
 
-        if (resultUrl.startsWith("Error")) {
-            return ResponseEntity.badRequest().body(Map.of("error", resultUrl));
+            // 2. Process image with Remove.bg
+            String resultUrl = backgroundRemovalService.removeBackgroundAndSave(file);
+
+            // 3. Refund if API call fails
+            if (resultUrl.startsWith("Error")) {
+                userService.refundCredit(currentUserId);
+                return ResponseEntity.badRequest().body(Map.of("error", resultUrl));
+            }
+
+            return ResponseEntity.ok(Map.of("imageUrl", resultUrl));
+
+        } catch (Exception e) {
+            // Returns: "You have used up your 10 free credits..."
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }
-
-        // Return the Cloudinary URL of the transparent image
-        return ResponseEntity.ok(Map.of("imageUrl", resultUrl));
     }
 }
