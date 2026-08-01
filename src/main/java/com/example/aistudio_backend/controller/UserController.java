@@ -3,8 +3,10 @@ package com.example.aistudio_backend.controller;
 import com.example.aistudio_backend.dto.RegisterRequest;
 import com.example.aistudio_backend.entity.User;
 import com.example.aistudio_backend.service.UserService;
+import com.example.aistudio_backend.repository.UserRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
@@ -16,6 +18,9 @@ public class UserController {
 
     @Autowired
     private UserService userService;
+
+    @Autowired
+    private UserRepository userRepository;
 
     @PostMapping("/register")
     public ResponseEntity<?> registerUser(@RequestBody RegisterRequest request) {
@@ -39,15 +44,20 @@ public class UserController {
         }
     }
 
-    // Now accepts an optional userId query param (e.g. /profile?userId=2)
     @GetMapping("/profile")
-    public ResponseEntity<?> getUserProfile(@RequestParam(required = false, defaultValue = "1") Long userId) {
-        User user = userService.getUserDetails(userId);
+    public ResponseEntity<?> getUserProfile() {
+
+        // 1. Get the email securely extracted from the JWT token
+        String email = SecurityContextHolder.getContext().getAuthentication().getName();
+
+        // 2. Fetch the user directly (matching your repository's return type)
+        User user = userRepository.findByEmail(email);
 
         if (user == null) {
-            return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
+            return ResponseEntity.status(404).body(Map.of("error", "User not found"));
         }
 
+        // 3. Return the profile securely
         return ResponseEntity.ok(Map.of(
                 "id", user.getId(),
                 "email", user.getEmail(),

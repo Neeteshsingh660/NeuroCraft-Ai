@@ -1,65 +1,49 @@
 package com.example.aistudio_backend.service;
 
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.mail.SimpleMailMessage;
+import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.stereotype.Service;
 
-import java.security.SecureRandom;
-import java.util.concurrent.TimeUnit;
+import java.util.Map;
+import java.util.Random;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Service
 public class OtpService {
 
     @Autowired
-    private StringRedisTemplate redisTemplate;
+    private JavaMailSender mailSender;
 
-    @Autowired
-    private EmailService emailService;
+    // Stores OTPs temporarily in memory (Email -> OTP)
+    private final Map<String, String> otpStorage = new ConcurrentHashMap<>();
 
-    private static final String OTP_PREFIX = "OTP:";
-    private static final long OTP_EXPIRE_MINUTES = 5;
+    // 1. Generate and Send OTP
+    public void generateAndSendOtp(String email) {
+        // Generate a 6-digit random OTP
+        String otp = String.format("%06d", new Random().nextInt(999999));
 
-    /**
-     * Generates a 6-digit OTP, stores it in Redis with 5-min TTL,
-     * and sends the email asynchronously.
-     */
-    public String generateAndSendOtp(String email) {
-        // 1. Generate 6-digit secure OTP
-        SecureRandom random = new SecureRandom();
-        String otp = String.format("%06d", random.nextInt(1000000));
+        // Save it in memory
+        otpStorage.put(email, otp);
 
-        // 2. Save in Redis with 5 minutes expiration time
-        String redisKey = OTP_PREFIX + email;
-        redisTemplate.opsForValue().set(redisKey, otp, OTP_EXPIRE_MINUTES, TimeUnit.MINUTES);
+        // Send it via Email
+        SimpleMailMessage message = new SimpleMailMessage();
+        message.setTo(email);
+        message.setSubject("Your AI Studio Verification Code");
+        message.setText("Your OTP code is: " + otp + "\n\nThis code is valid for your current session.");
 
-        // 3. Dispatch email asynchronously in background
-        emailService.sendOtpEmail(email, otp);
-
-        return "OTP sent successfully to " + email;
+        mailSender.send(message);
     }
 
-    /**
-     * Verifies user OTP against Redis key.
-     */
-    public boolean verifyOtp(String email, String userOtp) throws Exception {
-        String redisKey = OTP_PREFIX + email;
+    // 2. Validate the OTP (THIS IS THE METHOD THAT WAS MISSING!)
+    public boolean validateOtp(String email, String otp) {
+        String storedOtp = otpStorage.get(email);
 
-        // 1. Fetch OTP from Redis
-        String storedOtp = redisTemplate.opsForValue().get(redisKey);
-
-        // 2. If null, key expired or was never generated
-        if (storedOtp == null) {
-            throw new Exception("OTP has expired or was not requested. Please request a new code.");
+        if (storedOtp != null && storedOtp.equals(otp)) {
+            otpStorage.remove(email); // Clear the OTP after successful use
+            return true;
         }
 
-        // 3. Compare codes
-        if (!storedOtp.equals(userOtp)) {
-            throw new Exception("Invalid OTP code!");
-        }
-
-        // 4. Delete OTP from Redis immediately after successful verification
-        redisTemplate.delete(redisKey);
-
-        return true;
+        return false;
     }
 }

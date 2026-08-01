@@ -1,8 +1,12 @@
 package com.example.aistudio_backend.controller;
 
+import com.example.aistudio_backend.entity.User;
+import com.example.aistudio_backend.repository.UserRepository;
+import com.example.aistudio_backend.security.JwtUtil;
 import com.example.aistudio_backend.service.OtpService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.crypto.password.PasswordEncoder; // Make sure you have a PasswordEncoder bean!
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
@@ -15,42 +19,90 @@ public class AuthController {
     @Autowired
     private OtpService otpService;
 
-    // 1. Send OTP Endpoint
-    @PostMapping("/send-otp")
-    public ResponseEntity<?> sendOtp(@RequestBody Map<String, String> request) {
+    @Autowired
+    private UserRepository userRepository;
+
+    @Autowired
+    private JwtUtil jwtUtil;
+
+    @Autowired
+    private PasswordEncoder passwordEncoder; // Used to hash passwords securely
+
+    // ==========================================
+    // 1. REGISTRATION: Send OTP
+    // ==========================================
+    @PostMapping("/register/send-otp")
+    public ResponseEntity<?> sendRegistrationOtp(@RequestBody Map<String, String> request) {
         String email = request.get("email");
 
-        // Validate that email is not empty AND contains '@'
-        if (email == null || email.trim().isEmpty() || !email.contains("@")) {
-            return ResponseEntity.badRequest().body(Map.of("error", "Please enter a valid email address with an '@' symbol."));
+        // Make sure the email isn't already taken
+        if (userRepository.findByEmail(email) != null) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Email is already registered. Please login."));
         }
 
-        try {
-            String message = otpService.generateAndSendOtp(email);
-            return ResponseEntity.ok(Map.of("message", message));
-        } catch (Exception e) {
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
-        }
+        otpService.generateAndSendOtp(email);
+        return ResponseEntity.ok(Map.of("message", "OTP sent successfully to " + email));
     }
 
-    // 2. Verify OTP Endpoint
-    @PostMapping("/verify-otp")
-    public ResponseEntity<?> verifyOtp(@RequestBody Map<String, String> request) {
+    // ==========================================
+    // 2. REGISTRATION: Verify OTP & Save User
+    // ==========================================
+    @PostMapping("/register/verify")
+    public ResponseEntity<?> verifyAndRegister(@RequestBody Map<String, String> request) {
         String email = request.get("email");
         String otp = request.get("otp");
+        String password = request.get("password"); // They must submit their chosen password here!
 
-        if (email == null || otp == null) {
-            return ResponseEntity.badRequest().body(Map.of("error", "Email and OTP are required"));
+        if (!otpService.validateOtp(email, otp)) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Invalid or expired OTP"));
         }
 
-        try {
-            boolean isVerified = otpService.verifyOtp(email, otp);
-            return ResponseEntity.ok(Map.of(
-                    "success", isVerified,
-                    "message", "OTP verified successfully!"
-            ));
-        } catch (Exception e) {
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        // Double check they didn't get registered while waiting
+        if (userRepository.findByEmail(email) != null) {
+            return ResponseEntity.badRequest().body(Map.of("error", "User already exists."));
         }
+
+        // Create the user
+        User newUser = new User();
+        newUser.setEmail(email);
+        newUser.setPassword(passwordEncoder.encode(password)); // ALWAYS hash passwords!
+        newUser.setCredits(10);
+        newUser.setCurrentPlan("FREE");
+
+        userRepository.save(newUser);
+
+        // 👇 FIXED: Passing both email and userId to JwtUtil
+        String token = jwtUtil.generateToken(email, newUser.getId());
+
+        return ResponseEntity.ok(Map.of(
+                "message", "Registration successful!",
+                "token", token,
+                "userId", newUser.getId()
+        ));
+    }
+
+    // ==========================================
+    // 3. LOGIN: Password Only (No OTP)
+    // ==========================================
+    @PostMapping("/login")
+    public ResponseEntity<?> login(@RequestBody Map<String, String> request) {
+        String email = request.get("email");
+        String password = request.get("password");
+
+        User user = userRepository.findByEmail(email);
+
+        // Check if user exists and password matches
+        if (user == null || !passwordEncoder.matches(password, user.getPassword())) {
+            return ResponseEntity.status(401).body(Map.of("error", "Invalid email or password"));
+        }
+
+        // 👇 FIXED: Passing both email and userId to JwtUtil
+        String token = jwtUtil.generateToken(email, user.getId());
+
+        return ResponseEntity.ok(Map.of(
+                "message", "Login successful!",
+                "token", token,
+                "userId", user.getId()
+        ));
     }
 }
